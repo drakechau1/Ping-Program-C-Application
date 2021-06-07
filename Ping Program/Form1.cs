@@ -1,27 +1,18 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.ComponentModel;
-using System.Data;
-using System.Drawing;
-using System.Linq;
 using System.Text;
-using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;
-
 
 namespace Ping_Program
 {
     public partial class Form1 : Form
     {
         /*Global variables*/
-        
         Thread thread;
 
-        /* Classes*/
-
+        #region ICMP Class
         public class ICMP
         {
             public byte Type;
@@ -70,61 +61,83 @@ namespace Ping_Program
                 return (UInt16)(~chcksm);
             }
         }
+        #endregion
 
-        /*Child functions*/
-
-        public void Thread_Ping(object _ipe)
+        // delegate function
+        public delegate void Add_Items(ListBox lb, string message);
+        public void Add_Items_2_Listbox(ListBox lb, string message)
         {
-            IPEndPoint ipe = (IPEndPoint)_ipe;
+            if (lb.InvokeRequired)
+            {
+                Add_Items d = new Add_Items(Add_Items_2_Listbox);
+                this.Invoke(d, new object[] { lb, message });
+            }
+            else
+            {
+                lb.Items.Add(message);
+            }
+        }
+
+        // Thread
+        [Obsolete]
+        public void Thread_Ping()
+        {
+            byte[] data = new byte[1024];
+            int recv;
+            Socket socket = new Socket(AddressFamily.InterNetwork, SocketType.Raw, ProtocolType.Icmp);
+            IPHostEntry iphe = Dns.Resolve(txt_host.Text);
+            IPEndPoint ipe = new IPEndPoint(iphe.AddressList[0], 0);
             EndPoint ep = (EndPoint)ipe;
 
-            Socket socket = new Socket(ipe.AddressFamily, SocketType.Raw, ProtocolType.Icmp);
-
-            byte[] data = new byte[1024];
             ICMP packet = new ICMP();
-
             packet.Type = 0x08; // Echo request
             packet.Code = 0x00;
             packet.Checksum = 0;
             Buffer.BlockCopy(BitConverter.GetBytes((short)1), 0, packet.Message, 0, 2);
             Buffer.BlockCopy(BitConverter.GetBytes((short)1), 0, packet.Message, 2, 2);
-            data = Encoding.ASCII.GetBytes("test packet");
+            string packetData = "";
+            if (txt_packetData.Text == string.Empty)
+            {
+                packetData = "Test packages";
+            }
+            else
+            {
+                packetData = txt_packetData.Text;
+            }
+            data = Encoding.ASCII.GetBytes(packetData);
             Buffer.BlockCopy(data, 0, packet.Message, 0, data.Length);
             packet.MessageSize = data.Length + 4;
             int packetsize = packet.MessageSize + 4;
-
             packet.Checksum = packet.getChecksum();
+            socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReceiveTimeout, 3000);
+            Add_Items_2_Listbox(lb_receivedPingData, $">> Pinging {ipe} with {packetsize} bytes of data");
 
-            socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReceiveTimeout, 1000);
-            socket.SendTo(packet.getBytes(), packetsize, SocketFlags.None, ipe);
-            Console.WriteLine($"Pinging {ipe} with {packetsize} bytes of data");
-
-            int sizeof_IPheader;
-            for (int i = 0; i < 4; i++)
+            int repeat = 4;
+            if (txtRepeat.Text != string.Empty && int.TryParse(txtRepeat.Text, out int n)) // Check a string is a numberic?
+            {
+                repeat = int.Parse(txtRepeat.Text);
+            }
+            for (int i = 1; i <= repeat; i++)
             {
                 DateTime sentAt = DateTime.Now;
                 socket.SendTo(packet.getBytes(), packetsize, SocketFlags.None, ipe);
-
                 try
                 {
-                    byte[] data_recv = new byte[1024];
-                    sizeof_IPheader = socket.ReceiveFrom(data_recv, ref ep);
-                    DateTime recvdAt = DateTime.Now;
-
-                    ICMP response = new ICMP(data_recv, sizeof_IPheader);
-
-                    long PingRTT = (long)(recvdAt - sentAt).TotalMilliseconds;
-                    Console.WriteLine($"Reply from {ep} tims:{PingRTT} ms");
+                    data = new byte[1024];
+                    recv = socket.ReceiveFrom(data, ref ep);
                 }
-                catch(Exception ex)
+                catch (SocketException)
                 {
-                    Console.WriteLine(ex.Message);
+                    Add_Items_2_Listbox(lb_receivedPingData, "No response from remote host");
+                    return;
                 }
-
+                ICMP response = new ICMP(data, recv);
+                DateTime recvdAt = DateTime.Now;
+                long PingRTT = (long)(recvdAt - sentAt).TotalMilliseconds;
+                Add_Items_2_Listbox(lb_receivedPingData, $"Reply from {ep} seq: {i}, tims:{PingRTT} ms");
                 Thread.Sleep(1000);
             }
-
-            
+            Add_Items_2_Listbox(lb_receivedPingData, string.Empty);
         }
 
         /* Main functions */
@@ -139,29 +152,16 @@ namespace Ping_Program
             txt_host.Text = "www.google.com";
         }
 
+        [Obsolete]
         private void btn_start_Click(object sender, EventArgs e)
         {
-            //IPAddress ip_address = IPAddress.Parse(txt_host.Text);
-            IPAddress ip_address = Dns.GetHostAddresses(txt_host.Text)[1];
-            //IPAddress ip_address = Dns.GetHostEntry(txt_host.Text).AddressList[0];
-            Console.WriteLine(ip_address);
-            IPEndPoint ipe = new IPEndPoint(ip_address, 0);
-
-            thread = new Thread(new ParameterizedThreadStart(Thread_Ping));
-            thread.Start(ipe);
-
-            Console.WriteLine("Thread is starting");
+            thread = new Thread(new ThreadStart(Thread_Ping));
+            thread.Start();
         }
 
         private void btn_stop_Click(object sender, EventArgs e)
         {
             thread.Abort();
         }
-
-        private void btn_close_Click(object sender, EventArgs e)
-        {
-
-        }
-
     }
 }
